@@ -1,8 +1,14 @@
 from multiprocessing import context
 
+import copy
+
 import bpy
 import bpy_extras
 import math
+
+import gpu
+import gpu_extras.batch
+
 
 # ブレンダーに登録するアドオン情報
 bl_info = {
@@ -36,6 +42,7 @@ def register():
 
     bpy.types.TOPBAR_MT_editor_menus.append(TOPBAR_MT_my_menu.submenu)
     print("レベルエディタが有効化されました。")
+    DrawCollider.hanlde = bpy.types.SpaceView3D.draw_handler_add(DrawCollider.draw_collider, (), 'WINDOW', 'POST_VIEW')
 
 
 #Add-On無効化時コールバック
@@ -45,41 +52,7 @@ def unregister():
     for cls in classes:
         bpy.utils.unregister_class(cls)
     print("レベルエディタが無効化されました。")
-
-### ============================ オブジェクト生成 ============================ ###
-
-#オペレータ 頂点を伸ばす
-class MYADDON_OT_stretch_vertex(bpy.types.Operator):
-    bl_idname = "myaddon.myaddon_ot_stretch_vertex"
-    bl_label = "頂点を伸ばす"
-    bl_description = "頂点座標を引っ張って伸ばします"
-    #リドゥ、アンドゥ可能オプション
-    bl_options = {'REGISTER', 'UNDO'}
-
-    #メニューを実行したときに呼ばれるコールバック関数
-    def execute(self, context):
-        bpy.data.objects["Cube"].data.vertices[0].co.x += 1.0
-        print("頂点を伸ばしました。")
-
-        #オペレータの命令終了を通知
-        return {'FINISHED'}
-
-#オペレータ ICO球生成
-class MYADDON_OT_create_ico_sphere(bpy.types.Operator):
-    bl_idname = "myaddon.myaddon_ot_create_ico_sphere"
-    bl_label = "ICO球を生成"
-    bl_description = "ICO球を生成します"
-    #リドゥ、アンドゥ可能オプション
-    bl_options = {'REGISTER', 'UNDO'}
-
-    #メニューを実行したときに呼ばれるコールバック関数
-    def execute(self, context):
-        bpy.ops.mesh.primitive_ico_sphere_add(subdivisions=2, radius=1.0, location=(0, 0, 0))
-        print("ICO球を生成しました。")
-
-        #オペレータの命令終了を通知
-        return {'FINISHED'}
-    
+    bpy.types.SpaceView3D.draw_handler_remove(DrawCollider.hanlde, 'WINDOW')
 
 ### =============================== 出力関連 ================================= ###
 
@@ -243,6 +216,119 @@ class OBJECT_PT_file_name(bpy.types.Panel):
         self.layout.operator(MYADDON_OT_export_scene.bl_idname, text=MYADDON_OT_export_scene.bl_label)
         
     
+
+### ============================ オブジェクト生成 ============================ ###
+
+#オペレータ 頂点を伸ばす
+class MYADDON_OT_stretch_vertex(bpy.types.Operator):
+    bl_idname = "myaddon.myaddon_ot_stretch_vertex"
+    bl_label = "頂点を伸ばす"
+    bl_description = "頂点座標を引っ張って伸ばします"
+    #リドゥ、アンドゥ可能オプション
+    bl_options = {'REGISTER', 'UNDO'}
+
+    #メニューを実行したときに呼ばれるコールバック関数
+    def execute(self, context):
+        bpy.data.objects["Cube"].data.vertices[0].co.x += 1.0
+        print("頂点を伸ばしました。")
+
+        #オペレータの命令終了を通知
+        return {'FINISHED'}
+
+#オペレータ ICO球生成
+class MYADDON_OT_create_ico_sphere(bpy.types.Operator):
+    bl_idname = "myaddon.myaddon_ot_create_ico_sphere"
+    bl_label = "ICO球を生成"
+    bl_description = "ICO球を生成します"
+    #リドゥ、アンドゥ可能オプション
+    bl_options = {'REGISTER', 'UNDO'}
+
+    #メニューを実行したときに呼ばれるコールバック関数
+    def execute(self, context):
+        bpy.ops.mesh.primitive_ico_sphere_add(subdivisions=2, radius=1.0, location=(0, 0, 0))
+        print("ICO球を生成しました。")
+
+        #オペレータの命令終了を通知
+        return {'FINISHED'}
+    
+### ================================ 描画関連 =============================== ###
+#コライダー描画
+class DrawCollider:
+   
+   # 描画ハンドル
+   hanlde = None
+
+   #3Dビューに描画するコールバック関数
+   def draw_collider(): 
+       
+        # 頂点データ
+        vertices = {"pos":[]}
+        # インデックスデータ
+        indices = []
+
+        # 各頂点の、オブジェクト中心からのオフセット
+        offsets = [
+            [-0.5, -0.5, -0.5],  # 左下前
+            [+0.5, -0.5, -0.5],  # 右下前
+            [-0.5, +0.5, -0.5],  # 左上前
+            [+0.5, +0.5, -0.5],  # 右上前
+            [-0.5, -0.5, +0.5],  # 左下奥
+            [+0.5, -0.5, +0.5],  # 右下奥
+            [-0.5, +0.5, +0.5],  # 左上奥
+            [+0.5, +0.5, +0.5],  # 右上奥
+        ]
+        
+        # 立方体のX, Y, Z方向サイズ
+        size = [2, 2, 2]
+
+        # 現在シーンのオブジェクトリストを走査
+        for object in bpy.context.scene.objects:
+            # 追加前の頂点数
+            start = len(vertices["pos"])
+       
+            # Boxの8頂点分回す
+            for offset in offsets:
+                # オブジェクトの中心座標をコピー
+                pos = copy.copy(object.location)
+                # 中心点を基準に各頂点ごとにずらす
+                pos[0] += offset[0] * size[0]
+                pos[1] += offset[1] * size[1]
+                pos[2] += offset[2] * size[2]
+                # 頂点データリストに座標を追加
+                vertices['pos'].append(pos)
+
+                # 前面を構成する辺の頂点インデックス
+                indices.append([start+0, start+1])
+                indices.append([start+2, start+3])
+                indices.append([start+0, start+2])
+                indices.append([start+1, start+3])
+
+                # 奥面を構成する辺の頂点インデックス
+                indices.append([start+4, start+5])
+                indices.append([start+6, start+7])
+                indices.append([start+4, start+6])
+                indices.append([start+5, start+7])
+
+                # 手前と奥を繋ぐ辺の頂点インデックス
+                indices.append([start+0, start+4])
+                indices.append([start+1, start+5])
+                indices.append([start+2, start+6])
+                indices.append([start+3, start+7])
+
+        # ビルトインのシェーダを取得
+        shader = gpu.shader.from_builtin("UNIFORM_COLOR")
+
+        # バッチを作成(引数：シェーダ、トポロジー、頂点データ、インデックスデータ)
+        batch = gpu_extras.batch.batch_for_shader(shader, "LINES", vertices, indices = indices)
+
+        # シェーダのパラメータ設定
+        color = [0.5, 1.0, 1.0, 1.0]
+        shader.bind()
+        shader.uniform_float("color", color)
+        # 描画
+        batch.draw(shader)
+
+
 
 #Blenderに登録するクラスリスト
 classes = (
